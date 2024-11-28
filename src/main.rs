@@ -3,6 +3,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use dirs::config_dir;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
@@ -18,6 +19,7 @@ use std::{
     error::Error,
     fs::{File, OpenOptions},
     io::{self, Write},
+    path::PathBuf,
 };
 
 use serde::{Deserialize, Serialize};
@@ -69,7 +71,7 @@ struct App {
     scroll_state: ScrollbarState,
     scroll_offset: usize,
 
-    file: File,
+    filepath: PathBuf,
 }
 
 impl App {
@@ -81,12 +83,9 @@ impl App {
             selected_index: None,
             scroll_state: ScrollbarState::default(),
             scroll_offset: 0,
-            file: OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .open("tasks.json")
-                .unwrap(),
+            filepath: (config_dir().expect("config directory not found"))
+                .join("cratouille")
+                .join("tasks.json"),
         };
 
         app.read_file();
@@ -153,6 +152,15 @@ impl App {
         self.save_file();
     }
 
+    fn get_file(&self, truncate: bool) -> Result<File, io::Error> {
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(truncate)
+            .open(&self.filepath)
+    }
+
     fn save_file(&mut self) {
         // Serialized into a string
         let serialized = match serde_json::to_string_pretty(&self.tasks) {
@@ -160,27 +168,19 @@ impl App {
             Err(_) => String::new(),
         };
 
-        let file_result = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open("tasks.json");
-
-        match file_result {
-            Ok(file) => {
-                self.file = file;
-                let _ = self.file.write(serialized.as_bytes());
+        match self.get_file(true) {
+            Ok(mut file) => {
+                let _ = file.write(serialized.as_bytes());
             }
             Err(e) => eprintln!("Error opening file: {}", e),
         }
     }
 
     fn read_file(&mut self) {
-        self.tasks = match serde_json::from_reader(&self.file) {
-            Ok(content) => content,
-            Err(_) => vec![],
-        }
+        self.tasks = self.get_file(false).map_or_else(
+            |_| vec![],
+            |file| serde_json::from_reader(file).unwrap_or_else(|_| vec![]),
+        );
     }
 }
 
