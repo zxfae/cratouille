@@ -17,7 +17,7 @@ use ratatui::{
 };
 use std::{
     error::Error,
-    fs::{File, OpenOptions},
+    fs::{create_dir_all, File, OpenOptions},
     io::{self, Write},
     path::PathBuf,
 };
@@ -153,6 +153,10 @@ impl App {
     }
 
     fn get_file(&self, truncate: bool) -> Result<File, io::Error> {
+        if let Some(parent_dir) = self.filepath.parent() {
+            create_dir_all(parent_dir)?;
+        }
+
         OpenOptions::new()
             .read(true)
             .write(true)
