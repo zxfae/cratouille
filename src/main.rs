@@ -5,15 +5,24 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Alignment, Rect},
-    style::{Color, Style, Modifier},
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, List, ListItem, BorderType, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{
+        Block, BorderType, Borders, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState,
+    },
     Terminal,
 };
-use std::{error::Error, io};
+use std::{
+    error::Error,
+    fs::{File, OpenOptions},
+    io::{self, Write},
+};
 
-#[derive(Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Serialize, Deserialize)]
 enum Priority {
     Low,
     Medium,
@@ -23,7 +32,7 @@ enum Priority {
 impl Priority {
     fn get_color(&self) -> Color {
         match self {
-            Priority::Low => Color::Rgb(9,245,33),
+            Priority::Low => Color::Rgb(9, 245, 33),
             Priority::Medium => Color::Rgb(245, 151, 9),
             Priority::High => Color::Rgb(245, 9, 9),
         }
@@ -46,7 +55,7 @@ impl Priority {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Task {
     description: String,
     priority: Priority,
@@ -59,36 +68,48 @@ struct App {
     selected_index: Option<usize>,
     scroll_state: ScrollbarState,
     scroll_offset: usize,
+
+    file: File,
 }
 
 impl App {
     fn new() -> App {
-        App {
+        let mut app = App {
             input: String::new(),
             tasks: Vec::new(),
             current_priority: Priority::Medium,
             selected_index: None,
             scroll_state: ScrollbarState::default(),
             scroll_offset: 0,
-        }
+            file: OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open("tasks.json")
+                .unwrap(),
+        };
+
+        app.read_file();
+        app
     }
 
     fn add_task(&mut self) {
-        if !self.input.trim().is_empty() {
-            self.tasks.push(Task {
-                description: self.input.clone(),
-                priority: self.current_priority.clone(),
-            });
-            self.input.clear();
-            self.scroll_state = self.scroll_state.content_length(self.tasks.len());
+        if self.input.trim().is_empty() {
+            return;
         }
+
+        self.tasks.push(Task {
+            description: self.input.clone(),
+            priority: self.current_priority.clone(),
+        });
+        self.input.clear();
+        self.scroll_state = self.scroll_state.content_length(self.tasks.len());
+        self.save_file();
     }
 
     fn cycle_priority(&mut self) {
         self.current_priority = self.current_priority.next();
     }
-
-
 
     fn move_selection(&mut self, down: bool, max_visible: usize) {
         let len = self.tasks.len();
@@ -129,6 +150,37 @@ impl App {
                 self.scroll_state = self.scroll_state.content_length(self.tasks.len());
             }
         }
+        self.save_file();
+    }
+
+    fn save_file(&mut self) {
+        // Serialized into a string
+        let serialized = match serde_json::to_string_pretty(&self.tasks) {
+            Ok(res) => res,
+            Err(_) => String::new(),
+        };
+
+        let file_result = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open("tasks.json");
+
+        match file_result {
+            Ok(file) => {
+                self.file = file;
+                let _ = self.file.write(serialized.as_bytes());
+            }
+            Err(e) => eprintln!("Error opening file: {}", e),
+        }
+    }
+
+    fn read_file(&mut self) {
+        self.tasks = match serde_json::from_reader(&self.file) {
+            Ok(content) => content,
+            Err(_) => vec![],
+        }
     }
 }
 
@@ -138,10 +190,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    
+
     let app = App::new();
     let res = run_app(&mut terminal, app);
-    
+
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -149,7 +201,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         DisableMouseCapture
     )?;
     terminal.show_cursor()?;
-    
+
     if let Err(err) = res {
         println!("{:?}", err)
     }
@@ -169,60 +221,88 @@ fn run_app<B: ratatui::backend::Backend>(
                 .title_alignment(Alignment::Center)
                 .style(Style::default().fg(Color::Rgb(41, 186, 56)));
 
-            let area = main_block.inner(f.size());
-            f.render_widget(main_block, f.size());
+            let area = main_block.inner(f.area());
+            f.render_widget(main_block, f.area());
 
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .margin(2)
-                .constraints([
-                    Constraint::Length(3),
-                    Constraint::Min(5),
-                    Constraint::Length(3),
-                    Constraint::Length(3),
-                ].as_ref())
+                .constraints(
+                    [
+                        Constraint::Length(3),
+                        Constraint::Min(5),
+                        Constraint::Length(3),
+                        Constraint::Length(3),
+                    ]
+                    .as_ref(),
+                )
                 .split(area);
 
             let header_text = vec![
-                Span::styled("Task", Style::default().fg(Color::Rgb(103, 241, 34)).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "Task",
+                    Style::default()
+                        .fg(Color::Rgb(103, 241, 34))
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(" "),
-                Span::styled("Manager", Style::default().fg(Color::Rgb(241, 103, 34)).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "Manager",
+                    Style::default()
+                        .fg(Color::Rgb(241, 103, 34))
+                        .add_modifier(Modifier::BOLD),
+                ),
             ];
+
             let header = Paragraph::new(Line::from(header_text))
                 .alignment(Alignment::Center)
                 .block(Block::default().borders(Borders::NONE));
             f.render_widget(header, chunks[0]);
 
             let max_visible = (chunks[1].height as usize).saturating_sub(2);
-            
-            let visible_tasks = app.tasks.iter()
+
+            let visible_tasks = app
+                .tasks
+                .iter()
                 .enumerate()
                 .skip(app.scroll_offset)
                 .take(max_visible);
 
             let items: Vec<ListItem> = visible_tasks
                 .map(|(i, task)| {
-                    let bullet = if Some(i) == app.selected_index { "►" } else { "•" };
-                    let content = format!("{} {} [{}]", bullet, task.description, task.priority.as_str());
-                    ListItem::new(content)
-                        .style(
-                            if Some(i) == app.selected_index {
-                                Style::default()
-                                    .fg(task.priority.get_color())
-                                    .add_modifier(Modifier::BOLD)
-                            } else {
-                                Style::default().fg(task.priority.get_color())
-                            }
-                        )
+                    let bullet = if Some(i) == app.selected_index {
+                        "►"
+                    } else {
+                        "•"
+                    };
+                    let content = format!(
+                        "{} {} [{}]",
+                        bullet,
+                        task.description,
+                        task.priority.as_str()
+                    );
+                    ListItem::new(content).style(if Some(i) == app.selected_index {
+                        Style::default()
+                            .fg(task.priority.get_color())
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(task.priority.get_color())
+                    })
                 })
                 .collect();
 
             let tasks_block = Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Double)
-                .title(format!(" Tasks ({}/{}) ", 
-                    if app.tasks.is_empty() { 0 } else { app.scroll_offset + 1 }, 
-                    app.tasks.len()))
+                .title(format!(
+                    " Tasks ({}/{}) ",
+                    if app.tasks.is_empty() {
+                        0
+                    } else {
+                        app.scroll_offset + 1
+                    },
+                    app.tasks.len()
+                ))
                 .title_alignment(Alignment::Center)
                 .border_style(Style::default().fg(Color::Rgb(150, 150, 150)));
 
@@ -243,15 +323,18 @@ fn run_app<B: ratatui::backend::Backend>(
             let title = format!(" Priority: {} ", app.current_priority.as_str());
             let input = Paragraph::new(app.input.as_str())
                 .style(Style::default().fg(Color::White))
-                .block(Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title(title)
-                    .title_alignment(Alignment::Center)
-                    .border_style(Style::default().fg(app.current_priority.get_color())));
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .title(title)
+                        .title_alignment(Alignment::Center)
+                        .border_style(Style::default().fg(app.current_priority.get_color())),
+                );
             f.render_widget(input, chunks[2]);
 
-            let help = " 📝 [Enter] Add | 🎯 [F1] Priority | ⬆️⬇️ Select | ❌ [Del] Delete | 🚪 [ESC] Quit ";
+            let help =
+                " 📝 [Enter] Add | 🎯 [F1] Priority | ⬆️⬇️ Select | ❌ [Del] Delete | 🚪 [ESC] Quit ";
             let content3 = Paragraph::new(help)
                 .style(Style::default().fg(Color::Rgb(180, 180, 180)))
                 .alignment(Alignment::Center)
