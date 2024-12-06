@@ -70,7 +70,6 @@ struct App {
     selected_index: Option<usize>,
     scroll_state: ScrollbarState,
     scroll_offset: usize,
-
     filepath: PathBuf,
 }
 
@@ -84,6 +83,7 @@ impl App {
             scroll_state: ScrollbarState::default(),
             scroll_offset: 0,
             filepath: (config_dir().expect("config directory not found"))
+                // Cratouille folder created at .config folder
                 .join("cratouille")
                 .join("tasks.json"),
         };
@@ -152,6 +152,7 @@ impl App {
         self.save_file();
     }
 
+    // Read, Write, Create file && Truncate
     fn get_file(&self, truncate: bool) -> Result<File, io::Error> {
         if let Some(parent_dir) = self.filepath.parent() {
             create_dir_all(parent_dir)?;
