@@ -22,46 +22,11 @@ use std::{
     path::PathBuf,
 };
 
-use serde::{Deserialize, Serialize};
+mod priority;
+use crate::priority::*;
+mod task;
+use crate::task::*;
 
-#[derive(Clone, Serialize, Deserialize)]
-enum Priority {
-    Low,
-    Medium,
-    High,
-}
-
-impl Priority {
-    fn get_color(&self) -> Color {
-        match self {
-            Priority::Low => Color::Rgb(9, 245, 33),
-            Priority::Medium => Color::Rgb(245, 151, 9),
-            Priority::High => Color::Rgb(245, 9, 9),
-        }
-    }
-
-    fn next(&self) -> Self {
-        match self {
-            Priority::Low => Priority::Medium,
-            Priority::Medium => Priority::High,
-            Priority::High => Priority::Low,
-        }
-    }
-
-    fn as_str(&self) -> &str {
-        match self {
-            Priority::Low => "Low",
-            Priority::Medium => "Medium",
-            Priority::High => "High",
-        }
-    }
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-struct Task {
-    description: String,
-    priority: Priority,
-}
 
 struct App {
     input: String,
