@@ -3,7 +3,6 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use dirs::config_dir;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
@@ -11,148 +10,19 @@ use ratatui::{
     text::{Line, Span},
     widgets::{
         Block, BorderType, Borders, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState,
     },
     Terminal,
 };
 use std::{
     error::Error,
-    fs::{create_dir_all, File, OpenOptions},
-    io::{self, Write},
-    path::PathBuf,
+    io::{self},
 };
 
 mod priority;
-use crate::priority::*;
 mod task;
-use crate::task::*;
+mod app;
+use crate::app::*;
 
-
-struct App {
-    input: String,
-    tasks: Vec<Task>,
-    current_priority: Priority,
-    selected_index: Option<usize>,
-    scroll_state: ScrollbarState,
-    scroll_offset: usize,
-    filepath: PathBuf,
-}
-
-impl App {
-    fn new() -> App {
-        let mut app = App {
-            input: String::new(),
-            tasks: Vec::new(),
-            current_priority: Priority::Medium,
-            selected_index: None,
-            scroll_state: ScrollbarState::default(),
-            scroll_offset: 0,
-            filepath: (config_dir().expect("config directory not found"))
-                // Cratouille folder created at .config folder
-                .join("cratouille")
-                .join("tasks.json"),
-        };
-
-        app.read_file();
-        app
-    }
-
-    fn add_task(&mut self) {
-        if self.input.trim().is_empty() {
-            return;
-        }
-
-        self.tasks.push(Task {
-            description: self.input.clone(),
-            priority: self.current_priority.clone(),
-        });
-        self.input.clear();
-        self.scroll_state = self.scroll_state.content_length(self.tasks.len());
-        self.save_file();
-    }
-
-    fn cycle_priority(&mut self) {
-        self.current_priority = self.current_priority.next();
-    }
-
-    fn move_selection(&mut self, down: bool, max_visible: usize) {
-        let len = self.tasks.len();
-        if len == 0 {
-            self.selected_index = None;
-            return;
-        }
-
-        self.selected_index = match self.selected_index {
-            None => Some(0),
-            Some(i) => {
-                let new_index = if down {
-                    (i + 1).min(len - 1)
-                } else {
-                    i.saturating_sub(1)
-                };
-
-                if new_index >= self.scroll_offset + max_visible {
-                    self.scroll_offset = new_index.saturating_sub(max_visible - 1);
-                } else if new_index < self.scroll_offset {
-                    self.scroll_offset = new_index;
-                }
-
-                Some(new_index)
-            }
-        };
-    }
-
-    fn delete_selected_task(&mut self) {
-        if let Some(index) = self.selected_index {
-            if index < self.tasks.len() {
-                self.tasks.remove(index);
-                if self.tasks.is_empty() {
-                    self.selected_index = None;
-                } else {
-                    self.selected_index = Some(index.min(self.tasks.len() - 1));
-                }
-                self.scroll_state = self.scroll_state.content_length(self.tasks.len());
-            }
-        }
-        self.save_file();
-    }
-
-    // Read, Write, Create file && Truncate
-    fn get_file(&self, truncate: bool) -> Result<File, io::Error> {
-        if let Some(parent_dir) = self.filepath.parent() {
-            create_dir_all(parent_dir)?;
-        }
-
-        OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(truncate)
-            .open(&self.filepath)
-    }
-
-    fn save_file(&mut self) {
-        // Serialized into a string
-        let serialized = match serde_json::to_string_pretty(&self.tasks) {
-            Ok(res) => res,
-            Err(_) => String::new(),
-        };
-
-        match self.get_file(true) {
-            Ok(mut file) => {
-                let _ = file.write(serialized.as_bytes());
-            }
-            Err(e) => eprintln!("Error opening file: {}", e),
-        }
-    }
-
-    fn read_file(&mut self) {
-        self.tasks = self.get_file(false).map_or_else(
-            |_| vec![],
-            |file| serde_json::from_reader(file).unwrap_or_else(|_| vec![]),
-        );
-    }
-}
 
 fn main() -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;

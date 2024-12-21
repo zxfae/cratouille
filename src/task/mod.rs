@@ -5,4 +5,5 @@ use crate::priority::Priority;
 pub struct Task {
     pub description: String,
     pub priority: Priority,
+    pub loading:  u8,
 }
